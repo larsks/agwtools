@@ -59,12 +59,13 @@ func main() {
 	port := flag.IntP("port", "p", 0, "radio port")
 	once := flag.BoolP("once", "o", false, "exit after first command completes")
 	maxConns := flag.IntP("max-connections", "m", 0, "maximum simultaneous connections (0 = unlimited)")
+	keepalive := flag.DurationP("keepalive", "k", 60*time.Second, "interval for AGWPE keepalive frames, to prevent the server from closing an idle connection (0 to disable)")
 
 	flag.Parse()
 
 	args := flag.Args()
 	if len(args) == 0 {
-		log.Fatalf("Usage: agwwrap [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [--once|-o] -- <command> [<args>...]")
+		log.Fatalf("Usage: agwwrap [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [--once|-o] -- <command> [<args>...]")
 	}
 	cmdName := args[0]
 	cmdArgs := args[1:]
@@ -156,6 +157,17 @@ connectionLoop:
 		sessionDone := make(chan string)
 		shuttingDown := false
 
+		// Periodic keepalive frame so the server's idle timer doesn't fire
+		// during long gaps between inbound connections. A version request
+		// is a lightweight, side-effect-free query the server always
+		// answers, and any bytes read from us reset its idle timer.
+		var keepaliveCh <-chan time.Time
+		var keepaliveTicker *time.Ticker
+		if *keepalive > 0 {
+			keepaliveTicker = time.NewTicker(*keepalive)
+			keepaliveCh = keepaliveTicker.C
+		}
+
 		log.Printf("Listening for inbound connections...")
 
 	dispatcherLoop:
@@ -244,12 +256,19 @@ connectionLoop:
 						writeAGW(dropHdr, nil)
 					}
 				}
+			case <-keepaliveCh:
+				if err := writeAGW(keepaliveHeader(uint8(*port), *callsign), nil); err != nil {
+					log.Printf("Keepalive write failed: %v", err)
+				}
 			}
 			// Non-session frames (register acks, version/port-info/port-caps
 			// replies, etc.) are control-plane responses to our own requests
 			// and require no dispatcher action.
 		}
 
+		if keepaliveTicker != nil {
+			keepaliveTicker.Stop()
+		}
 		connCancel()
 		conn.Close()
 
@@ -266,6 +285,18 @@ connectionLoop:
 	}
 
 	log.Printf("Exiting agwwrap.")
+}
+
+// keepaliveHeader builds a version-request frame: a lightweight,
+// side-effect-free query that the AGWPE server always answers, used to
+// reset the server's idle timer during long gaps between inbound
+// connections.
+func keepaliveHeader(port uint8, callsign string) *agw.Header {
+	return &agw.Header{
+		Port:     port,
+		DataKind: agw.KindVersion,
+		CallFrom: callsign,
+	}
 }
 
 func handleSession(ctx context.Context, writeAGW writeFunc, cfg SessionConfig, frames <-chan agwFrame, done chan<- string) {
