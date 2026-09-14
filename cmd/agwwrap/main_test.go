@@ -5,6 +5,8 @@ import (
 	"io"
 	"syscall"
 	"testing"
+
+	"github.com/chrissnell/graywolf/pkg/agw"
 )
 
 // TestIsSessionFrame reproduces the "Received frame for unknown session"
@@ -33,6 +35,27 @@ func TestIsSessionFrame(t *testing.T) {
 				t.Errorf("isSessionFrame(%q) = %v, want %v", tc.kind, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestKeepaliveHeader confirms the keepalive frame is a plain version
+// request (isSessionFrame(agw.KindVersion) is false, so the dispatcher
+// never routes the server's reply into a session), carrying our callsign
+// and the configured radio port.
+func TestKeepaliveHeader(t *testing.T) {
+	hdr := keepaliveHeader(3, "N0CALL")
+
+	if hdr.DataKind != agw.KindVersion {
+		t.Errorf("DataKind = %q, want %q", hdr.DataKind, agw.KindVersion)
+	}
+	if hdr.Port != 3 {
+		t.Errorf("Port = %d, want 3", hdr.Port)
+	}
+	if hdr.CallFrom != "N0CALL" {
+		t.Errorf("CallFrom = %q, want %q", hdr.CallFrom, "N0CALL")
+	}
+	if isSessionFrame(hdr.DataKind) {
+		t.Errorf("isSessionFrame(%q) = true, want false", hdr.DataKind)
 	}
 }
 
