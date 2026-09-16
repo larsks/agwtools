@@ -42,12 +42,13 @@ func isSessionFrame(kind byte) bool {
 }
 
 type SessionConfig struct {
-	RemoteCall string
-	Callsign   string
-	Port       int
-	CmdName    string
-	CmdArgs    []string
-	UsePty     bool
+	RemoteCall  string
+	Callsign    string
+	Port        int
+	CmdName     string
+	CmdArgs     []string
+	UsePty      bool
+	IdleTimeout time.Duration
 }
 
 type writeFunc func(*agw.Header, []byte) error
@@ -60,12 +61,13 @@ func main() {
 	once := flag.BoolP("once", "o", false, "exit after first command completes")
 	maxConns := flag.IntP("max-connections", "m", 0, "maximum simultaneous connections (0 = unlimited)")
 	keepalive := flag.DurationP("keepalive", "k", 60*time.Second, "interval for AGWPE keepalive frames, to prevent the server from closing an idle connection (0 to disable)")
+	idleTimeout := flag.DurationP("idle-timeout", "i", 10*time.Minute, "disconnect a session after this period of inactivity from the remote station (0 to disable)")
 
 	flag.Parse()
 
 	args := flag.Args()
 	if len(args) == 0 {
-		log.Fatalf("Usage: agwwrap [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [--once|-o] -- <command> [<args>...]")
+		log.Fatalf("Usage: agwwrap [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [-i <timeout>] [--once|-o] -- <command> [<args>...]")
 	}
 	cmdName := args[0]
 	cmdArgs := args[1:]
@@ -231,12 +233,13 @@ connectionLoop:
 					activeSessions[remoteCall] = ch
 
 					cfg := SessionConfig{
-						RemoteCall: remoteCall,
-						Callsign:   *callsign,
-						Port:       *port,
-						CmdName:    cmdName,
-						CmdArgs:    cmdArgs,
-						UsePty:     *usePty,
+						RemoteCall:  remoteCall,
+						Callsign:    *callsign,
+						Port:        *port,
+						CmdName:     cmdName,
+						CmdArgs:     cmdArgs,
+						UsePty:      *usePty,
+						IdleTimeout: *idleTimeout,
 					}
 					go handleSession(connCtx, writeAGW, cfg, ch, sessionDone)
 				} else if isSessionFrame(f.hdr.DataKind) {
@@ -418,6 +421,17 @@ func handleSession(ctx context.Context, writeAGW writeFunc, cfg SessionConfig, f
 
 	disconnectedByRemote := false
 
+	// Idle timer: disconnect a session that receives nothing from the
+	// remote station for cfg.IdleTimeout, so a dropped or forgotten
+	// connection doesn't keep its command running indefinitely.
+	var idleTimer *time.Timer
+	var idleCh <-chan time.Time
+	if cfg.IdleTimeout > 0 {
+		idleTimer = time.NewTimer(cfg.IdleTimeout)
+		idleCh = idleTimer.C
+		defer idleTimer.Stop()
+	}
+
 runLoop:
 	for {
 		select {
@@ -437,9 +451,20 @@ runLoop:
 			cmdCancel()
 			<-cmdDone
 			break runLoop
+		case <-idleCh:
+			log.Printf("[%s] Idle timeout (%s) reached, disconnecting", cfg.RemoteCall, cfg.IdleTimeout)
+			cmdCancel()
+			<-cmdDone
+			break runLoop
 		case f := <-frames:
 			if f.hdr.DataKind == KindConnectedData {
 				if len(f.data) > 0 {
+					if idleTimer != nil {
+						if !idleTimer.Stop() {
+							<-idleTimer.C
+						}
+						idleTimer.Reset(cfg.IdleTimeout)
+					}
 					select {
 					case stdinCh <- f.data:
 					case <-ctx.Done():
