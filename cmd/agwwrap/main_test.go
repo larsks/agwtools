@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/chrissnell/graywolf/pkg/agw"
 )
@@ -81,6 +84,116 @@ func TestIsCommandStreamClosed(t *testing.T) {
 				t.Errorf("isCommandStreamClosed(%v, %v) = %v, want %v", tc.err, tc.usePty, got, tc.want)
 			}
 		})
+	}
+}
+
+// recordingWriter collects the headers passed to writeAGW so tests can
+// assert which AGWPE frames a session emitted.
+type recordingWriter struct {
+	mu      sync.Mutex
+	headers []*agw.Header
+}
+
+func (w *recordingWriter) write(hdr *agw.Header, _ []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.headers = append(w.headers, hdr)
+	return nil
+}
+
+func (w *recordingWriter) sawDisconnect() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, hdr := range w.headers {
+		if hdr.DataKind == KindDisconnect {
+			return true
+		}
+	}
+	return false
+}
+
+// TestHandleSessionIdleTimeout confirms a session with no traffic from the
+// remote station is disconnected once cfg.IdleTimeout elapses, and that the
+// dispatcher is notified so it can clean up.
+func TestHandleSessionIdleTimeout(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	w := &recordingWriter{}
+	cfg := SessionConfig{
+		RemoteCall:  "N0CALL",
+		Callsign:    "MYCALL",
+		CmdName:     "cat",
+		IdleTimeout: 50 * time.Millisecond,
+	}
+
+	frames := make(chan agwFrame)
+	done := make(chan string, 1)
+
+	go handleSession(ctx, w.write, cfg, frames, done)
+
+	select {
+	case remoteCall := <-done:
+		if remoteCall != cfg.RemoteCall {
+			t.Errorf("done callsign = %q, want %q", remoteCall, cfg.RemoteCall)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleSession did not finish after idle timeout")
+	}
+
+	if !w.sawDisconnect() {
+		t.Errorf("expected a disconnect frame after the idle timeout, got none")
+	}
+}
+
+// TestHandleSessionIdleTimeoutResetByActivity confirms that traffic from the
+// remote station resets the idle timer, so a session stays open as long as
+// it keeps receiving data, and only idles out once that traffic stops.
+func TestHandleSessionIdleTimeoutResetByActivity(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	w := &recordingWriter{}
+	idleTimeout := 100 * time.Millisecond
+	cfg := SessionConfig{
+		RemoteCall:  "N0CALL",
+		Callsign:    "MYCALL",
+		CmdName:     "cat",
+		IdleTimeout: idleTimeout,
+	}
+
+	frames := make(chan agwFrame)
+	done := make(chan string, 1)
+
+	go handleSession(ctx, w.write, cfg, frames, done)
+
+	// Send data more often than the idle timeout for longer than the
+	// timeout itself; the session must still be alive afterward.
+	activityWindow := idleTimeout * 3
+	deadline := time.Now().Add(activityWindow)
+	for time.Now().Before(deadline) {
+		select {
+		case frames <- agwFrame{hdr: &agw.Header{DataKind: KindConnectedData, CallFrom: cfg.RemoteCall}, data: []byte("x")}:
+		case <-done:
+			t.Fatal("session ended early despite ongoing activity")
+		}
+		time.Sleep(idleTimeout / 4)
+	}
+
+	select {
+	case <-done:
+		t.Fatal("session ended early despite ongoing activity")
+	default:
+	}
+
+	// Now stop sending traffic; the session should idle out.
+	select {
+	case remoteCall := <-done:
+		if remoteCall != cfg.RemoteCall {
+			t.Errorf("done callsign = %q, want %q", remoteCall, cfg.RemoteCall)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleSession did not finish after activity stopped")
 	}
 }
 
