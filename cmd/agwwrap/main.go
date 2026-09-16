@@ -51,18 +51,33 @@ type SessionConfig struct {
 	IdleTimeout time.Duration
 }
 
+type Options struct {
+	hostPort    string
+	usePty      bool
+	callsign    string
+	radioPort   int
+	once        bool
+	maxCons     int
+	keepAlive   time.Duration
+	idleTimeout time.Duration
+}
+
+var options Options
+
 type writeFunc func(*agw.Header, []byte) error
 
-func main() {
-	hostPort := flag.StringP("host", "h", "localhost:8000", "agwpe_host:port")
-	usePty := flag.BoolP("pty", "t", false, "allocate a pty for the command")
-	callsign := flag.StringP("callsign", "c", "NOCALL", "local callsign to register")
-	port := flag.IntP("port", "p", 0, "radio port")
-	once := flag.BoolP("once", "o", false, "exit after first command completes")
-	maxConns := flag.IntP("max-connections", "m", 0, "maximum simultaneous connections (0 = unlimited)")
-	keepalive := flag.DurationP("keepalive", "k", 60*time.Second, "interval for AGWPE keepalive frames, to prevent the server from closing an idle connection (0 to disable)")
-	idleTimeout := flag.DurationP("idle-timeout", "i", 10*time.Minute, "disconnect a session after this period of inactivity from the remote station (0 to disable)")
+func init() {
+	flag.StringVarP(&options.hostPort, "host", "h", "localhost:8000", "agwpe_host:port")
+	flag.BoolVarP(&options.usePty, "pty", "t", false, "allocate a pty for the command")
+	flag.StringVarP(&options.callsign, "callsign", "c", "NOCALL", "local callsign to register")
+	flag.IntVarP(&options.radioPort, "port", "p", 0, "radio port")
+	flag.BoolVarP(&options.once, "once", "o", false, "exit after first command completes")
+	flag.IntVarP(&options.maxCons, "max-connections", "m", 0, "maximum simultaneous connections (0 = unlimited)")
+	flag.DurationVarP(&options.keepAlive, "keepalive", "k", 60*time.Second, "interval for AGWPE keepalive frames, to prevent the server from closing an idle connection (0 to disable)")
+	flag.DurationVarP(&options.idleTimeout, "idle-timeout", "i", 10*time.Minute, "disconnect a session after this period of inactivity from the remote station (0 to disable)")
+}
 
+func main() {
 	flag.Parse()
 
 	args := flag.Args()
@@ -85,10 +100,10 @@ func main() {
 
 connectionLoop:
 	for ctx.Err() == nil {
-		conn, err := net.Dial("tcp", *hostPort)
+		conn, err := net.Dial("tcp", options.hostPort)
 		if err != nil {
-			log.Printf("Failed to connect to %s: %v", *hostPort, err)
-			if *once {
+			log.Printf("Failed to connect to %s: %v", options.hostPort, err)
+			if options.once {
 				break connectionLoop
 			}
 			select {
@@ -99,18 +114,18 @@ connectionLoop:
 			continue
 		}
 
-		log.Printf("Connected to AGWPE at %s", *hostPort)
+		log.Printf("Connected to AGWPE at %s", options.hostPort)
 
 		// Register callsign
 		regHeader := &agw.Header{
-			Port:     uint8(*port),
+			Port:     uint8(options.radioPort),
 			DataKind: agw.KindRegisterCallsign,
-			CallFrom: *callsign,
+			CallFrom: options.callsign,
 		}
 		if err := agw.WriteFrame(conn, regHeader, nil); err != nil {
 			log.Printf("Failed to register callsign: %v", err)
 			conn.Close()
-			if *once {
+			if options.once {
 				break connectionLoop
 			}
 			select {
@@ -120,7 +135,7 @@ connectionLoop:
 			}
 			continue
 		}
-		log.Printf("Registered callsign %s on port %d", *callsign, *port)
+		log.Printf("Registered callsign %s on port %d", options.callsign, options.radioPort)
 
 		// Serialize writes to the AGWPE TCP socket
 		var connMu sync.Mutex
@@ -165,8 +180,8 @@ connectionLoop:
 		// answers, and any bytes read from us reset its idle timer.
 		var keepaliveCh <-chan time.Time
 		var keepaliveTicker *time.Ticker
-		if *keepalive > 0 {
-			keepaliveTicker = time.NewTicker(*keepalive)
+		if options.keepAlive > 0 {
+			keepaliveTicker = time.NewTicker(options.keepAlive)
 			keepaliveCh = keepaliveTicker.C
 		}
 
@@ -197,7 +212,7 @@ connectionLoop:
 				if shuttingDown && len(activeSessions) == 0 {
 					break dispatcherLoop // all sessions finished cleanly
 				}
-				if *once && !shuttingDown {
+				if options.once && !shuttingDown {
 					connCancel() // trigger shutdown after first session finishes
 					shuttingDown = true
 					if len(activeSessions) == 0 {
@@ -216,12 +231,12 @@ connectionLoop:
 						log.Printf("Ignoring duplicate connect frame from %s", remoteCall)
 						continue
 					}
-					if *maxConns > 0 && len(activeSessions) >= *maxConns {
-						log.Printf("Rejecting connection from %s (limit %d reached)", remoteCall, *maxConns)
+					if options.maxCons > 0 && len(activeSessions) >= options.maxCons {
+						log.Printf("Rejecting connection from %s (limit %d reached)", remoteCall, options.maxCons)
 						rejectHdr := &agw.Header{
-							Port:     uint8(*port),
+							Port:     uint8(options.radioPort),
 							DataKind: KindDisconnect,
-							CallFrom: *callsign,
+							CallFrom: options.callsign,
 							CallTo:   remoteCall,
 						}
 						writeAGW(rejectHdr, nil)
@@ -234,12 +249,12 @@ connectionLoop:
 
 					cfg := SessionConfig{
 						RemoteCall:  remoteCall,
-						Callsign:    *callsign,
-						Port:        *port,
+						Callsign:    options.callsign,
+						Port:        options.radioPort,
 						CmdName:     cmdName,
 						CmdArgs:     cmdArgs,
-						UsePty:      *usePty,
-						IdleTimeout: *idleTimeout,
+						UsePty:      options.usePty,
+						IdleTimeout: options.idleTimeout,
 					}
 					go handleSession(connCtx, writeAGW, cfg, ch, sessionDone)
 				} else if isSessionFrame(f.hdr.DataKind) {
@@ -251,16 +266,16 @@ connectionLoop:
 						// Disconnect frames are ignored if we don't know the session.
 						log.Printf("Received frame for unknown session %s, dropping", remoteCall)
 						dropHdr := &agw.Header{
-							Port:     uint8(*port),
+							Port:     uint8(options.radioPort),
 							DataKind: KindDisconnect,
-							CallFrom: *callsign,
+							CallFrom: options.callsign,
 							CallTo:   remoteCall,
 						}
 						writeAGW(dropHdr, nil)
 					}
 				}
 			case <-keepaliveCh:
-				if err := writeAGW(keepaliveHeader(uint8(*port), *callsign), nil); err != nil {
+				if err := writeAGW(keepaliveHeader(uint8(options.radioPort), options.callsign), nil); err != nil {
 					log.Printf("Keepalive write failed: %v", err)
 				}
 			}
@@ -275,7 +290,7 @@ connectionLoop:
 		connCancel()
 		conn.Close()
 
-		if *once || ctx.Err() != nil {
+		if options.once || ctx.Err() != nil {
 			break connectionLoop
 		}
 
