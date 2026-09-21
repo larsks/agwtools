@@ -64,7 +64,7 @@ func init() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: agwconnect [-h <agwpe_host:port>] [-c <callsign>] [-p <port>] [-k <interval>] [-v <digipeaters>] [--raw|-r] [-w <seconds>] <remote-callsign>\n")
+	fmt.Fprintf(os.Stderr, "Usage: agwconnect [-f <config>] [-h <agwpe_host:port>] [-c <callsign>] [-p <port>] [-k <interval>] [-v <digipeaters>] [--raw|-r] [-w <seconds>] <remote-callsign>\n")
 	flag.PrintDefaults()
 }
 
@@ -74,6 +74,11 @@ func main() {
 
 	flag.Usage = usage
 	flag.Parse()
+
+	if _, err := agwconn.LoadConfigFile(flag.CommandLine, "agwconnect"); err != nil {
+		fmt.Fprintf(os.Stderr, "agwconnect: %v\n", err)
+		os.Exit(2)
+	}
 
 	remote, err := options.prepare(flag.Args(), flag.CommandLine.Changed("wait"), isTerminal(os.Stdin))
 	if err != nil {

@@ -56,9 +56,17 @@ func init() {
 func main() {
 	flag.Parse()
 
+	configPath, err := agwconn.LoadConfigFile(flag.CommandLine, "agwlisten")
+	if err != nil {
+		log.Fatal(err)
+	}
+	if configPath != "" {
+		log.Printf("Using configuration file %s", configPath)
+	}
+
 	args := flag.Args()
 	if len(args) == 0 {
-		log.Fatalf("Usage: agwlisten [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [-i <timeout>] [--eol|-l] [--once|-o] -- <command> [<args>...]")
+		log.Fatalf("Usage: agwlisten [-f <config>] [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [-i <timeout>] [--eol|-l] [--once|-o] -- <command> [<args>...]")
 	}
 	if err := options.Validate(); err != nil {
 		log.Fatal(err)

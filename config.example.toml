@@ -1,0 +1,67 @@
+# Example configuration for agwlisten and agwconnect.
+#
+# Copy this file to ~/.config/agwtools/config.toml (or to
+# $XDG_CONFIG_HOME/agwtools/config.toml), or point at it with --config/-f or
+# $AGWTOOLS_CONFIG_PATH, and uncomment the options you want to change. Every
+# option is commented out here, and the values shown are examples; the
+# built-in default is given next to each one.
+#
+# Keys are the long command line option names. Precedence, highest first:
+# the command line, the command's own section, [shared], the built-in default.
+#
+# Durations are strings such as "30s" or "10m".
+
+# Options common to all commands. A command's own section below can override
+# any of these for that command alone.
+[shared]
+# AGWPE gateway to connect to.                        (default "localhost:8000")
+#host = "radio0.local:8000"
+
+# Callsign to register with the gateway.              (default "NOCALL")
+#callsign = "N0CALL-1"
+
+# Radio port on the gateway, 0-255.                   (default 0)
+#port = 0
+
+# How often to send a keepalive frame so the gateway doesn't close an idle
+# connection. "0s" disables it.                       (default "60s")
+#keepalive = "60s"
+
+# Options for agwlisten only. Anything here that isn't a [shared] option is an
+# error anywhere else, and agwconnect ignores this section entirely.
+[agwlisten]
+# Run each command on a pty rather than pipes.        (default false)
+#pty = true
+
+# Exit after the first command completes.             (default false)
+#once = false
+
+# Maximum simultaneous connections, 0 for unlimited.  (default 0)
+#max-connections = 4
+
+# Disconnect a session after this long without traffic from the remote
+# station. "0s" disables it.                          (default "10m")
+#idle-timeout = "10m"
+
+# Translate \r\n to \r in command output sent to the remote station.
+#                                                     (default false)
+#eol = true
+
+# Any [shared] option can be overridden for this command alone, e.g. to
+# listen on a different gateway than agwconnect uses:
+#host = "localhost:8001"
+
+# Options for agwconnect only.
+[agwconnect]
+# Digipeater path, up to 8 callsigns: a list, or one comma-separated string.
+#                                                     (default: none, connect directly)
+#via = ["WIDE1-1", "WIDE2-1"]
+
+# Don't translate line endings (\n to \r on the way out, \r to \n on the way
+# in).                                                (default false)
+#raw = false
+
+# After end of input, keep the session open until the remote station has been
+# silent for this many seconds, then disconnect; 0 disconnects at once.
+# (default: 30 when stdin is not a terminal, otherwise 0)
+#wait = 10
