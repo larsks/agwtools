@@ -49,6 +49,7 @@ type SessionConfig struct {
 	CmdArgs     []string
 	UsePty      bool
 	IdleTimeout time.Duration
+	CRLFToCR    bool
 }
 
 type Options struct {
@@ -60,6 +61,7 @@ type Options struct {
 	maxCons     int
 	keepAlive   time.Duration
 	idleTimeout time.Duration
+	eol         bool
 }
 
 var options Options
@@ -75,6 +77,7 @@ func init() {
 	flag.IntVarP(&options.maxCons, "max-connections", "m", 0, "maximum simultaneous connections (0 = unlimited)")
 	flag.DurationVarP(&options.keepAlive, "keepalive", "k", 60*time.Second, "interval for AGWPE keepalive frames, to prevent the server from closing an idle connection (0 to disable)")
 	flag.DurationVarP(&options.idleTimeout, "idle-timeout", "i", 10*time.Minute, "disconnect a session after this period of inactivity from the remote station (0 to disable)")
+	flag.BoolVarP(&options.eol, "eol", "l", false, "translate \\r\\n to \\r in command output sent to the remote station")
 }
 
 func main() {
@@ -82,7 +85,7 @@ func main() {
 
 	args := flag.Args()
 	if len(args) == 0 {
-		log.Fatalf("Usage: agwwrap [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [-i <timeout>] [--once|-o] -- <command> [<args>...]")
+		log.Fatalf("Usage: agwwrap [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [-i <timeout>] [--eol|-l] [--once|-o] -- <command> [<args>...]")
 	}
 	cmdName := args[0]
 	cmdArgs := args[1:]
@@ -255,6 +258,7 @@ connectionLoop:
 						CmdArgs:     cmdArgs,
 						UsePty:      options.usePty,
 						IdleTimeout: options.idleTimeout,
+						CRLFToCR:    options.eol,
 					}
 					go handleSession(connCtx, writeAGW, cfg, ch, sessionDone)
 				} else if isSessionFrame(f.hdr.DataKind) {
@@ -409,8 +413,12 @@ func handleSession(ctx context.Context, writeAGW writeFunc, cfg SessionConfig, f
 	// Writer: Command stdout -> AGWPE
 	go func() {
 		buf := make([]byte, 256)
+		var eol crlfToCR
 		for {
 			n, err := cmdStdout.Read(buf)
+			if cfg.CRLFToCR {
+				n = eol.filter(buf[:n])
+			}
 			if n > 0 {
 				outHdr := &agw.Header{
 					Port:     uint8(cfg.Port),
@@ -521,6 +529,31 @@ runLoop:
 		}
 		writeAGW(discHdr, nil)
 	}
+}
+
+// crlfToCR translates \r\n to \r in a byte stream that arrives in
+// arbitrary chunks. A \r is passed through as soon as it is seen (so a
+// prompt ending in a lone \r isn't held back waiting for more data);
+// prevCR records that the last byte emitted was a \r so a \n that starts the
+// next chunk can still be dropped. A bare \n is left alone.
+type crlfToCR struct {
+	prevCR bool
+}
+
+// filter rewrites buf in place and returns the number of bytes kept. The
+// output is never longer than the input, so no allocation is needed.
+func (f *crlfToCR) filter(buf []byte) int {
+	n := 0
+	for _, b := range buf {
+		if b == '\n' && f.prevCR {
+			f.prevCR = false
+			continue
+		}
+		f.prevCR = b == '\r'
+		buf[n] = b
+		n++
+	}
+	return n
 }
 
 // isCommandStreamClosed reports whether err from reading a command's output
