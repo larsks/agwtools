@@ -21,11 +21,13 @@ type Config struct {
 
 // AddFlags registers the options every command shares (--host/-h,
 // --callsign/-c, --port/-p and --keepalive/-k) on fs, storing the results in
-// c. Call it before parsing.
+// c, along with --config/-f, which names the configuration file read by
+// LoadConfigFile. Call it before parsing.
 func (c *Config) AddFlags(fs *flag.FlagSet) {
 	fs.StringVarP(&c.HostPort, "host", "h", "localhost:8000", "agwpe_host:port")
 	fs.StringVarP(&c.Callsign, "callsign", "c", "NOCALL", "local callsign to register")
 	fs.IntVarP(&c.RadioPort, "port", "p", 0, "radio port")
+	fs.StringP(configFlag, "f", "", "configuration file (default: $"+ConfigPathEnv+", else $XDG_CONFIG_HOME/agwtools/config.toml, else ~/.config/agwtools/config.toml; \"\" to read none)")
 	fs.DurationVarP(&c.KeepAlive, "keepalive", "k", 60*time.Second, "interval for AGWPE keepalive frames, to prevent the server from closing an idle connection (0 to disable)")
 }
 

@@ -14,6 +14,7 @@ import (
 	flag "github.com/spf13/pflag"
 
 	"github.com/larsks/agwtools/internal/agwconn"
+	"github.com/larsks/agwtools/internal/configtest"
 	"github.com/larsks/agwtools/internal/fakeagw"
 )
 
@@ -578,4 +579,25 @@ func TestRegistrationRefusedFailsRun(t *testing.T) {
 	if err == nil {
 		t.Fatal("run() = nil although the gateway refused the registration")
 	}
+}
+
+// TestExampleConfig loads config.example.toml, with every option enabled,
+// through agwconnect's real option set. That fails if the example puts an option
+// in a section it isn't valid in, or names one agwconnect doesn't have, and it
+// also fails if an option is missing from the example.
+func TestExampleConfig(t *testing.T) {
+	path := configtest.UncommentedExample(t)
+
+	if err := flag.CommandLine.Set("config", path); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := agwconn.LoadConfigFile(flag.CommandLine, "agwconnect")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded != path {
+		t.Errorf("loaded %q, want %q", loaded, path)
+	}
+
+	configtest.RequireCovers(t, flag.CommandLine, "agwconnect", path)
 }

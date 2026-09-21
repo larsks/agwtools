@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/chrissnell/graywolf/pkg/agw"
+	flag "github.com/spf13/pflag"
 
 	"github.com/larsks/agwtools/internal/agwconn"
+	"github.com/larsks/agwtools/internal/configtest"
 )
 
 func TestIsCommandStreamClosed(t *testing.T) {
@@ -307,4 +309,25 @@ func TestPTYMasterReadAfterSlaveClose(t *testing.T) {
 	if isCommandStreamClosed(readErr, false) {
 		t.Errorf("isCommandStreamClosed(%v, false) = true, want false", readErr)
 	}
+}
+
+// TestExampleConfig loads config.example.toml, with every option enabled,
+// through agwlisten's real option set. That fails if the example puts an option
+// in a section it isn't valid in, or names one agwlisten doesn't have, and it
+// also fails if an option is missing from the example.
+func TestExampleConfig(t *testing.T) {
+	path := configtest.UncommentedExample(t)
+
+	if err := flag.CommandLine.Set("config", path); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := agwconn.LoadConfigFile(flag.CommandLine, "agwlisten")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded != path {
+		t.Errorf("loaded %q, want %q", loaded, path)
+	}
+
+	configtest.RequireCovers(t, flag.CommandLine, "agwlisten", path)
 }
