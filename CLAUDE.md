@@ -30,6 +30,10 @@ To be implemented:
   the format is documented in `README.md`. New options need no extra work:
   keys map to long flag names, and an option registered by `Config.AddFlags`
   is shared, anything else is specific to the command that registers it.
+  `--config` and `--version` are the exceptions: they are command line only.
+- `internal/version` -- Build commit and date, reported by `--version`. They
+  are set by `-ldflags -X` in the `Makefile` (override with
+  `make COMMIT=... BUILD_DATE=...`); a plain `go build` reports `unknown`.
 - `internal/fakeagw` -- In-process fake AGWPE gateway for tests.
 - `internal/configtest` -- Test helpers that check `config.example.toml`
   against each command's real options. When adding an option, add it to the

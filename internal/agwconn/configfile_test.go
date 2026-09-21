@@ -91,13 +91,36 @@ func TestAddFlagsRegistersConfig(t *testing.T) {
 	// command line.
 	var got []string
 	fs.VisitAll(func(f *flag.Flag) {
-		if f.Name != "config" {
+		if f.Name != "config" && f.Name != "version" {
 			got = append(got, f.Name)
 		}
 	})
 	slices.Sort(got)
 	if !slices.Equal(got, sharedFlags) {
 		t.Errorf("AddFlags registered %v, sharedFlags is %v", got, sharedFlags)
+	}
+}
+
+func TestAddFlagsRegistersVersion(t *testing.T) {
+	var c Config
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	c.AddFlags(fs)
+
+	if err := fs.Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	if c.ShowVersion {
+		t.Error("ShowVersion is set without --version")
+	}
+
+	if err := fs.Parse([]string{"--version"}); err != nil {
+		t.Fatal(err)
+	}
+	if !c.ShowVersion {
+		t.Error("--version did not set ShowVersion")
+	}
+	if f := fs.Lookup("version"); f.Shorthand != "" {
+		t.Errorf("--version shorthand = %q, want none", f.Shorthand)
 	}
 }
 
@@ -311,6 +334,11 @@ func TestErrors(t *testing.T) {
 			"config key in file", "agwlisten",
 			"[shared]\nconfig = \"/x\"\n",
 			[]string{`"config"`},
+		},
+		{
+			"version key in file", "agwlisten",
+			"[shared]\nversion = true\n",
+			[]string{`"version"`, "unknown"},
 		},
 		{
 			"unknown section", "agwlisten",

@@ -18,6 +18,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/larsks/agwtools/internal/agwconn"
+	"github.com/larsks/agwtools/internal/version"
 )
 
 type SessionConfig struct {
@@ -56,6 +57,11 @@ func init() {
 func main() {
 	flag.Parse()
 
+	if options.ShowVersion {
+		fmt.Println(version.VersionString("agwlisten"))
+		return
+	}
+
 	configPath, err := agwconn.LoadConfigFile(flag.CommandLine, "agwlisten")
 	if err != nil {
 		log.Fatal(err)
@@ -66,7 +72,7 @@ func main() {
 
 	args := flag.Args()
 	if len(args) == 0 {
-		log.Fatalf("Usage: agwlisten [-f <config>] [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [-i <timeout>] [--eol|-l] [--once|-o] -- <command> [<args>...]")
+		log.Fatalf("Usage: agwlisten [-f <config>] [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [-i <timeout>] [--eol|-l] [--once|-o] [--version] -- <command> [<args>...]")
 	}
 	if err := options.Validate(); err != nil {
 		log.Fatal(err)

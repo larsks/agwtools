@@ -11,10 +11,38 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build:
+  version:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
+      issues: write
+      pull-requests: write
+
+    outputs:
+      published: ${{ steps.semrel.outputs.new_release_published }}
+      version: ${{ steps.semrel.outputs.new_release_version }}
+      major: ${{ steps.semrel.outputs.new_release_major_version }}
+      minor: ${{ steps.semrel.outputs.new_release_minor_version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Release
+        id: semrel
+        uses: cycjimmy/semantic-release-action@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
       packages: write
 
     steps:
@@ -44,10 +72,11 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Version tags are only generated when this run created a release.
           tags: |
-            type=semver,pattern=v{{version}}
-            type=semver,pattern=v{{major}}.{{minor}}
-            type=semver,pattern=v{{major}}
+            type=semver,pattern=v{{version}},value=${{ needs.version.outputs.version }},enable=${{  needs.version.outputs.published == 'true' }}
+            type=semver,pattern=v{{major}}.{{minor}},value=${{ needs.version.outputs.version }},enable=${{ needs.version.outputs.published == 'true' }}
+            type=semver,pattern=v{{major}},value=${{ needs.version.outputs.version }},enable=${{ needs.version.outputs.published == 'true' }}
             type=ref,event=branch
             type=ref,event=pr
             type=sha
@@ -64,3 +93,8 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Passed through to the Makefile (see the Containerfile). Without a
+          # new release we fall back to the Makefile's default version.
+          build-args: |
+            VERSION=${{ needs.version.outputs.version || 'devel' }}
+            COMMIT=${{ github.sha }}

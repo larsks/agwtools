@@ -1,0 +1,9 @@
+# semantic-release configuration. This is not an npm project, so we list the
+# plugins explicitly rather than using the defaults (which include
+# @semantic-release/npm and fail without a package.json).
+branches:
+  - main
+plugins:
+  - "@semantic-release/commit-analyzer"
+  - "@semantic-release/release-notes-generator"
+  - "@semantic-release/github"

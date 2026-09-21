@@ -20,6 +20,7 @@ const (
 	ConfigPathEnv = "AGWTOOLS_CONFIG_PATH"
 
 	configFlag    = "config"
+	versionFlag   = "version"
 	sharedSection = "shared"
 )
 
@@ -167,9 +168,10 @@ func configValues(flags *flag.FlagSet, command string, raw map[string]any) (map[
 }
 
 // isOption reports whether name is an option that may be set from the
-// configuration file: any long flag except the file's own path.
+// configuration file: any long flag except the file's own path and those that
+// only make sense on the command line.
 func isOption(flags *flag.FlagSet, name string) bool {
-	return name != configFlag && name != "help" && flags.Lookup(name) != nil
+	return name != configFlag && name != versionFlag && name != "help" && flags.Lookup(name) != nil
 }
 
 func optionNames(flags *flag.FlagSet) []string {

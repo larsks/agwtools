@@ -39,7 +39,7 @@ func UncommentedExample(t *testing.T) string {
 }
 
 // RequireCovers fails the test unless every option in flags, other than
-// --config, appears in [shared] or in the [command] section of the example at
+// --config and --version, which can't be set from the file, appears in [shared] or in the [command] section of the example at
 // path.
 func RequireCovers(t *testing.T, flags *flag.FlagSet, command, path string) {
 	t.Helper()
@@ -50,7 +50,7 @@ func RequireCovers(t *testing.T, flags *flag.FlagSet, command, path string) {
 	}
 
 	flags.VisitAll(func(f *flag.Flag) {
-		if f.Name == "config" || f.Name == "help" {
+		if f.Name == "config" || f.Name == "version" || f.Name == "help" {
 			return
 		}
 		_, inShared := sections["shared"][f.Name]

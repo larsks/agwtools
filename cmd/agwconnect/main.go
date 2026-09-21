@@ -17,6 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/larsks/agwtools/internal/agwconn"
+	"github.com/larsks/agwtools/internal/version"
 )
 
 const (
@@ -64,7 +65,7 @@ func init() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: agwconnect [-f <config>] [-h <agwpe_host:port>] [-c <callsign>] [-p <port>] [-k <interval>] [-v <digipeaters>] [--raw|-r] [-w <seconds>] <remote-callsign>\n")
+	fmt.Fprintf(os.Stderr, "Usage: agwconnect [-f <config>] [-h <agwpe_host:port>] [-c <callsign>] [-p <port>] [-k <interval>] [-v <digipeaters>] [--raw|-r] [-w <seconds>] [--version] <remote-callsign>\n")
 	flag.PrintDefaults()
 }
 
@@ -74,6 +75,11 @@ func main() {
 
 	flag.Usage = usage
 	flag.Parse()
+
+	if options.ShowVersion {
+		fmt.Println(version.VersionString("agwconnect"))
+		return
+	}
 
 	if _, err := agwconn.LoadConfigFile(flag.CommandLine, "agwconnect"); err != nil {
 		fmt.Fprintf(os.Stderr, "agwconnect: %v\n", err)
