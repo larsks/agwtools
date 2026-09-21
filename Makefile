@@ -11,15 +11,20 @@ export GOARCH
 export GOOS
 
 AGWLISTEN=agwlisten-$(GOOS)-$(GOARCH)
+AGWCONNECT=agwconnect-$(GOOS)-$(GOARCH)
 
-all: $(AGWLISTEN)
+all: $(AGWLISTEN) $(AGWCONNECT)
 
-$(AGWLISTEN): ./cmd/agwlisten/main.go
-	$(GO) build -o $@-$(GOOS)-$(GOARCH) ./cmd/agwlisten
+$(AGWLISTEN): $(wildcard cmd/agwlisten/*.go internal/*/*.go)
+	$(GO) build -o $@ ./cmd/agwlisten
 
-install: $(AGWLISTEN)
+$(AGWCONNECT): $(wildcard cmd/agwconnect/*.go internal/*/*.go)
+	$(GO) build -o $@ ./cmd/agwconnect
+
+install: $(AGWLISTEN) $(AGWCONNECT)
 	$(INSTALL) -m 755 -d $(DESTDIR)$(bindir)
-	$(INSTALL) -m 755 agwlisten $(DESTDIR)$(bindir)
+	$(INSTALL) -m 755 $(AGWLISTEN) $(DESTDIR)$(bindir)/agwlisten
+	$(INSTALL) -m 755 $(AGWCONNECT) $(DESTDIR)$(bindir)/agwconnect
 
 clean:
-	rm -f $(AGWLISTEN)
+	rm -f $(AGWLISTEN) $(AGWCONNECT)

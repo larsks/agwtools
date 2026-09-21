@@ -1,4 +1,4 @@
-module github.com/larsks/hatchet
+module github.com/larsks/agwtools
 
 go 1.26.2
 

@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"os"
 	"os/exec"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -18,28 +16,9 @@ import (
 	"github.com/chrissnell/graywolf/pkg/agw"
 	flag "github.com/spf13/pflag"
 	"golang.org/x/sys/unix"
+
+	"github.com/larsks/agwtools/internal/agwconn"
 )
-
-const (
-	KindConnect       byte = 'C'
-	KindDisconnect    byte = 'd'
-	KindConnectedData byte = 'D'
-)
-
-type agwFrame struct {
-	hdr  *agw.Header
-	data []byte
-}
-
-// isSessionFrame reports whether kind belongs to the per-session connected-
-// mode protocol (data or disconnect). Other kinds — e.g. 'X' register acks,
-// 'R'/'G'/'g' query replies — are dispatcher-level control frames that echo
-// our own callsign in CallFrom and must not be routed through session
-// lookup, or every reply to our own control frames looks like traffic for
-// an unknown session and triggers a spurious disconnect back to tncd.
-func isSessionFrame(kind byte) bool {
-	return kind == KindConnectedData || kind == KindDisconnect
-}
 
 type SessionConfig struct {
 	RemoteCall  string
@@ -53,13 +32,10 @@ type SessionConfig struct {
 }
 
 type Options struct {
-	hostPort    string
+	agwconn.Config
 	usePty      bool
-	callsign    string
-	radioPort   int
 	once        bool
 	maxCons     int
-	keepAlive   time.Duration
 	idleTimeout time.Duration
 	eol         bool
 }
@@ -69,13 +45,10 @@ var options Options
 type writeFunc func(*agw.Header, []byte) error
 
 func init() {
-	flag.StringVarP(&options.hostPort, "host", "h", "localhost:8000", "agwpe_host:port")
+	options.AddFlags(flag.CommandLine)
 	flag.BoolVarP(&options.usePty, "pty", "t", false, "allocate a pty for the command")
-	flag.StringVarP(&options.callsign, "callsign", "c", "NOCALL", "local callsign to register")
-	flag.IntVarP(&options.radioPort, "port", "p", 0, "radio port")
 	flag.BoolVarP(&options.once, "once", "o", false, "exit after first command completes")
 	flag.IntVarP(&options.maxCons, "max-connections", "m", 0, "maximum simultaneous connections (0 = unlimited)")
-	flag.DurationVarP(&options.keepAlive, "keepalive", "k", 60*time.Second, "interval for AGWPE keepalive frames, to prevent the server from closing an idle connection (0 to disable)")
 	flag.DurationVarP(&options.idleTimeout, "idle-timeout", "i", 10*time.Minute, "disconnect a session after this period of inactivity from the remote station (0 to disable)")
 	flag.BoolVarP(&options.eol, "eol", "l", false, "translate \\r\\n to \\r in command output sent to the remote station")
 }
@@ -86,6 +59,9 @@ func main() {
 	args := flag.Args()
 	if len(args) == 0 {
 		log.Fatalf("Usage: agwlisten [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [-i <timeout>] [--eol|-l] [--once|-o] -- <command> [<args>...]")
+	}
+	if err := options.Validate(); err != nil {
+		log.Fatal(err)
 	}
 	cmdName := args[0]
 	cmdArgs := args[1:]
@@ -103,9 +79,9 @@ func main() {
 
 connectionLoop:
 	for ctx.Err() == nil {
-		conn, err := net.Dial("tcp", options.hostPort)
+		conn, err := agwconn.Dial(ctx, options.Config)
 		if err != nil {
-			log.Printf("Failed to connect to %s: %v", options.hostPort, err)
+			log.Printf("Failed to connect to AGWPE: %v", err)
 			if options.once {
 				break connectionLoop
 			}
@@ -117,84 +93,28 @@ connectionLoop:
 			continue
 		}
 
-		log.Printf("Connected to AGWPE at %s", options.hostPort)
+		log.Printf("Connected to AGWPE at %s", options.HostPort)
+		log.Printf("Registered callsign %s on port %d", options.Callsign, options.RadioPort)
 
-		// Register callsign
-		regHeader := &agw.Header{
-			Port:     uint8(options.radioPort),
-			DataKind: agw.KindRegisterCallsign,
-			CallFrom: options.callsign,
-		}
-		if err := agw.WriteFrame(conn, regHeader, nil); err != nil {
-			log.Printf("Failed to register callsign: %v", err)
-			conn.Close()
-			if options.once {
-				break connectionLoop
-			}
-			select {
-			case <-ctx.Done():
-				break connectionLoop
-			case <-time.After(5 * time.Second):
-			}
-			continue
-		}
-		log.Printf("Registered callsign %s on port %d", options.callsign, options.radioPort)
-
-		// Serialize writes to the AGWPE TCP socket
-		var connMu sync.Mutex
-		writeAGW := func(hdr *agw.Header, data []byte) error {
-			connMu.Lock()
-			defer connMu.Unlock()
-			return agw.WriteFrame(conn, hdr, data)
-		}
+		writeAGW := conn.Write
+		frames := conn.Frames()
+		readerDone := conn.Done()
 
 		// Connection-scoped context so we can terminate sessions on drop
 		connCtx, connCancel := context.WithCancel(ctx)
 
-		frames := make(chan agwFrame)
-		readerErr := make(chan error, 1)
-
-		// Centralized reader for the AGWPE connection
-		go func() {
-			for {
-				hdr, data, err := agw.ReadFrame(conn)
-				if err != nil {
-					select {
-					case readerErr <- err:
-					case <-connCtx.Done():
-					}
-					return
-				}
-				select {
-				case frames <- agwFrame{hdr, data}:
-				case <-connCtx.Done():
-					return
-				}
-			}
-		}()
-
-		activeSessions := make(map[string]chan agwFrame)
+		activeSessions := make(map[string]chan agwconn.Frame)
 		sessionDone := make(chan string)
 		shuttingDown := false
-
-		// Periodic keepalive frame so the server's idle timer doesn't fire
-		// during long gaps between inbound connections. A version request
-		// is a lightweight, side-effect-free query the server always
-		// answers, and any bytes read from us reset its idle timer.
-		var keepaliveCh <-chan time.Time
-		var keepaliveTicker *time.Ticker
-		if options.keepAlive > 0 {
-			keepaliveTicker = time.NewTicker(options.keepAlive)
-			keepaliveCh = keepaliveTicker.C
-		}
 
 		log.Printf("Listening for inbound connections...")
 
 	dispatcherLoop:
 		for {
 			select {
-			case err := <-readerErr:
-				log.Printf("AGWPE connection read error: %v", err)
+			case <-readerDone:
+				readerDone = nil // Done stays closed; don't spin on it
+				log.Printf("AGWPE connection read error: %v", conn.Err())
 				_ = conn.Close() // fail fast: terminate any in-flight writers
 				connCancel()     // terminate all active sessions
 				shuttingDown = true
@@ -227,9 +147,9 @@ connectionLoop:
 					continue
 				}
 
-				remoteCall := f.hdr.CallFrom
+				remoteCall := f.Hdr.CallFrom
 
-				if f.hdr.DataKind == KindConnect {
+				if f.Hdr.DataKind == agwconn.KindConnect {
 					if _, exists := activeSessions[remoteCall]; exists {
 						log.Printf("Ignoring duplicate connect frame from %s", remoteCall)
 						continue
@@ -237,9 +157,9 @@ connectionLoop:
 					if options.maxCons > 0 && len(activeSessions) >= options.maxCons {
 						log.Printf("Rejecting connection from %s (limit %d reached)", remoteCall, options.maxCons)
 						rejectHdr := &agw.Header{
-							Port:     uint8(options.radioPort),
-							DataKind: KindDisconnect,
-							CallFrom: options.callsign,
+							Port:     options.Port(),
+							DataKind: agwconn.KindDisconnect,
+							CallFrom: options.Callsign,
 							CallTo:   remoteCall,
 						}
 						writeAGW(rejectHdr, nil)
@@ -247,13 +167,13 @@ connectionLoop:
 					}
 
 					log.Printf("Inbound connection from %s", remoteCall)
-					ch := make(chan agwFrame, 32)
+					ch := make(chan agwconn.Frame, 32)
 					activeSessions[remoteCall] = ch
 
 					cfg := SessionConfig{
 						RemoteCall:  remoteCall,
-						Callsign:    options.callsign,
-						Port:        options.radioPort,
+						Callsign:    options.Callsign,
+						Port:        options.RadioPort,
 						CmdName:     cmdName,
 						CmdArgs:     cmdArgs,
 						UsePty:      options.usePty,
@@ -261,26 +181,22 @@ connectionLoop:
 						CRLFToCR:    options.eol,
 					}
 					go handleSession(connCtx, writeAGW, cfg, ch, sessionDone)
-				} else if isSessionFrame(f.hdr.DataKind) {
+				} else if agwconn.IsSessionFrame(f.Hdr.DataKind) {
 					// Route frames to the appropriate session if it exists
 					if ch, exists := activeSessions[remoteCall]; exists {
 						ch <- f
-					} else if f.hdr.DataKind != KindDisconnect {
+					} else if f.Hdr.DataKind != agwconn.KindDisconnect {
 						// We received data for an unknown session, actively drop them.
 						// Disconnect frames are ignored if we don't know the session.
 						log.Printf("Received frame for unknown session %s, dropping", remoteCall)
 						dropHdr := &agw.Header{
-							Port:     uint8(options.radioPort),
-							DataKind: KindDisconnect,
-							CallFrom: options.callsign,
+							Port:     options.Port(),
+							DataKind: agwconn.KindDisconnect,
+							CallFrom: options.Callsign,
 							CallTo:   remoteCall,
 						}
 						writeAGW(dropHdr, nil)
 					}
-				}
-			case <-keepaliveCh:
-				if err := writeAGW(keepaliveHeader(uint8(options.radioPort), options.callsign), nil); err != nil {
-					log.Printf("Keepalive write failed: %v", err)
 				}
 			}
 			// Non-session frames (register acks, version/port-info/port-caps
@@ -288,9 +204,6 @@ connectionLoop:
 			// and require no dispatcher action.
 		}
 
-		if keepaliveTicker != nil {
-			keepaliveTicker.Stop()
-		}
 		connCancel()
 		conn.Close()
 
@@ -309,19 +222,7 @@ connectionLoop:
 	log.Printf("Exiting agwlisten.")
 }
 
-// keepaliveHeader builds a version-request frame: a lightweight,
-// side-effect-free query that the AGWPE server always answers, used to
-// reset the server's idle timer during long gaps between inbound
-// connections.
-func keepaliveHeader(port uint8, callsign string) *agw.Header {
-	return &agw.Header{
-		Port:     port,
-		DataKind: agw.KindVersion,
-		CallFrom: callsign,
-	}
-}
-
-func handleSession(ctx context.Context, writeAGW writeFunc, cfg SessionConfig, frames <-chan agwFrame, done chan<- string) {
+func handleSession(ctx context.Context, writeAGW writeFunc, cfg SessionConfig, frames <-chan agwconn.Frame, done chan<- string) {
 	// Always notify the dispatcher when this session ends
 	defer func() { done <- cfg.RemoteCall }()
 
@@ -377,7 +278,7 @@ func handleSession(ctx context.Context, writeAGW writeFunc, cfg SessionConfig, f
 		}
 		discHdr := &agw.Header{
 			Port:     uint8(cfg.Port),
-			DataKind: KindDisconnect,
+			DataKind: agwconn.KindDisconnect,
 			CallFrom: cfg.Callsign,
 			CallTo:   cfg.RemoteCall,
 		}
@@ -412,7 +313,7 @@ func handleSession(ctx context.Context, writeAGW writeFunc, cfg SessionConfig, f
 	writerErr := make(chan error, 1)
 	// Writer: Command stdout -> AGWPE
 	go func() {
-		buf := make([]byte, 256)
+		buf := make([]byte, agwconn.MaxDataLen)
 		var eol crlfToCR
 		for {
 			n, err := cmdStdout.Read(buf)
@@ -422,7 +323,7 @@ func handleSession(ctx context.Context, writeAGW writeFunc, cfg SessionConfig, f
 			if n > 0 {
 				outHdr := &agw.Header{
 					Port:     uint8(cfg.Port),
-					DataKind: KindConnectedData,
+					DataKind: agwconn.KindConnectedData,
 					CallFrom: cfg.Callsign,
 					CallTo:   cfg.RemoteCall,
 				}
@@ -480,8 +381,8 @@ runLoop:
 			<-cmdDone
 			break runLoop
 		case f := <-frames:
-			if f.hdr.DataKind == KindConnectedData {
-				if len(f.data) > 0 {
+			if f.Hdr.DataKind == agwconn.KindConnectedData {
+				if len(f.Data) > 0 {
 					if idleTimer != nil {
 						if !idleTimer.Stop() {
 							<-idleTimer.C
@@ -489,11 +390,11 @@ runLoop:
 						idleTimer.Reset(cfg.IdleTimeout)
 					}
 					select {
-					case stdinCh <- f.data:
+					case stdinCh <- f.Data:
 					case <-ctx.Done():
 					}
 				}
-			} else if f.hdr.DataKind == KindDisconnect {
+			} else if f.Hdr.DataKind == agwconn.KindDisconnect {
 				log.Printf("[%s] Disconnected by remote", cfg.RemoteCall)
 				disconnectedByRemote = true
 				cmdCancel()
@@ -523,7 +424,7 @@ runLoop:
 	if !disconnectedByRemote {
 		discHdr := &agw.Header{
 			Port:     uint8(cfg.Port),
-			DataKind: KindDisconnect,
+			DataKind: agwconn.KindDisconnect,
 			CallFrom: cfg.Callsign,
 			CallTo:   cfg.RemoteCall,
 		}
