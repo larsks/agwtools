@@ -10,16 +10,16 @@ GOOS=$(shell go env GOOS)
 export GOARCH
 export GOOS
 
-AGWWRAP=agwwrap-$(GOOS)-$(GOARCH)
+AGWLISTEN=agwlisten-$(GOOS)-$(GOARCH)
 
-all: $(AGWWRAP)
+all: $(AGWLISTEN)
 
-$(AGWWRAP): ./cmd/agwwrap/main.go
-	$(GO) build -o $@-$(GOOS)-$(GOARCH) ./cmd/agwwrap
+$(AGWLISTEN): ./cmd/agwlisten/main.go
+	$(GO) build -o $@-$(GOOS)-$(GOARCH) ./cmd/agwlisten
 
-install: agwwrap
+install: $(AGWLISTEN)
 	$(INSTALL) -m 755 -d $(DESTDIR)$(bindir)
-	$(INSTALL) -m 755 agwwrap $(DESTDIR)$(bindir)
+	$(INSTALL) -m 755 agwlisten $(DESTDIR)$(bindir)
 
 clean:
-	rm -f $(AGWWRAP)
+	rm -f $(AGWLISTEN)

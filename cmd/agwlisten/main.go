@@ -85,7 +85,7 @@ func main() {
 
 	args := flag.Args()
 	if len(args) == 0 {
-		log.Fatalf("Usage: agwwrap [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [-i <timeout>] [--eol|-l] [--once|-o] -- <command> [<args>...]")
+		log.Fatalf("Usage: agwlisten [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [-i <timeout>] [--eol|-l] [--once|-o] -- <command> [<args>...]")
 	}
 	cmdName := args[0]
 	cmdArgs := args[1:]
@@ -306,7 +306,7 @@ connectionLoop:
 		}
 	}
 
-	log.Printf("Exiting agwwrap.")
+	log.Printf("Exiting agwlisten.")
 }
 
 // keepaliveHeader builds a version-request frame: a lightweight,
