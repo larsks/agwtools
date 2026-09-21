@@ -197,6 +197,125 @@ func TestHandleSessionIdleTimeoutResetByActivity(t *testing.T) {
 	}
 }
 
+// TestCRLFToCR checks the translation, including a \r\n pair split across
+// two reads, which is the case a naive per-chunk replace would get wrong.
+func TestCRLFToCR(t *testing.T) {
+	cases := []struct {
+		name   string
+		chunks []string
+		want   string
+	}{
+		{"no line endings", []string{"hello"}, "hello"},
+		{"crlf", []string{"a\r\nb\r\n"}, "a\rb\r"},
+		{"bare lf untouched", []string{"a\nb"}, "a\nb"},
+		{"bare cr untouched", []string{"a\rb"}, "a\rb"},
+		{"cr cr lf", []string{"a\r\r\nb"}, "a\r\rb"},
+		{"lf cr lf", []string{"a\n\r\nb"}, "a\n\rb"},
+		{"split across chunks", []string{"a\r", "\nb"}, "a\rb"},
+		{"chunk of only lf after cr", []string{"a\r", "\n", "b"}, "a\rb"},
+		{"cr at end of chunk emitted immediately", []string{"a\r"}, "a\r"},
+		{"lf after non-cr chunk", []string{"a", "\nb"}, "a\nb"},
+		{"empty chunk keeps state", []string{"a\r", "", "\nb"}, "a\rb"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var f crlfToCR
+			var got []byte
+			for _, chunk := range tc.chunks {
+				buf := []byte(chunk)
+				n := f.filter(buf)
+				got = append(got, buf[:n]...)
+			}
+			if string(got) != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// dataWriter collects the payload of connected-data frames so tests can
+// assert exactly which bytes a session sent to the remote station.
+type dataWriter struct {
+	mu   sync.Mutex
+	data []byte
+}
+
+func (w *dataWriter) write(hdr *agw.Header, data []byte) error {
+	if hdr.DataKind != KindConnectedData {
+		return nil
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.data = append(w.data, data...)
+	return nil
+}
+
+func (w *dataWriter) len() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.data)
+}
+
+func (w *dataWriter) string() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return string(w.data)
+}
+
+// runEchoSession feeds input through a `cat` session and returns what was
+// sent back to the remote station once wantLen bytes have arrived.
+func runEchoSession(t *testing.T, crlfToCR bool, input string, wantLen int) string {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	w := &dataWriter{}
+	cfg := SessionConfig{
+		RemoteCall: "N0CALL",
+		Callsign:   "MYCALL",
+		CmdName:    "cat",
+		CRLFToCR:   crlfToCR,
+	}
+
+	frames := make(chan agwFrame)
+	done := make(chan string, 1)
+	go handleSession(ctx, w.write, cfg, frames, done)
+
+	frames <- agwFrame{hdr: &agw.Header{DataKind: KindConnectedData, CallFrom: cfg.RemoteCall}, data: []byte(input)}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for w.len() < wantLen && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleSession did not finish")
+	}
+	return w.string()
+}
+
+// TestHandleSessionCRLFToCR confirms that with CRLFToCR set, command output
+// reaches the remote station with \r\n rewritten to \r.
+func TestHandleSessionCRLFToCR(t *testing.T) {
+	got := runEchoSession(t, true, "one\r\ntwo\r\n", len("one\rtwo\r"))
+	if want := "one\rtwo\r"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestHandleSessionCRLFPassthrough confirms the default leaves output alone.
+func TestHandleSessionCRLFPassthrough(t *testing.T) {
+	got := runEchoSession(t, false, "one\r\ntwo\r\n", len("one\r\ntwo\r\n"))
+	if want := "one\r\ntwo\r\n"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 // pathErrorWrapping mimics the *fs.PathError wrapping that os.File.Read
 // produces around a syscall errno, so errors.Is(err, syscall.EIO) works the
 // same way it does with a real read error.
