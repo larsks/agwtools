@@ -10,57 +10,9 @@ import (
 	"time"
 
 	"github.com/chrissnell/graywolf/pkg/agw"
+
+	"github.com/larsks/agwtools/internal/agwconn"
 )
-
-// TestIsSessionFrame reproduces the "Received frame for unknown session"
-// bug: tncd's 'X' register-ack frame echoes our own callsign in CallFrom,
-// which the dispatcher previously mistook for connected-mode session
-// traffic and answered with a spurious 'd' disconnect back to tncd.
-func TestIsSessionFrame(t *testing.T) {
-	cases := []struct {
-		name string
-		kind byte
-		want bool
-	}{
-		{"connected data", KindConnectedData, true},
-		{"disconnect", KindDisconnect, true},
-		{"connect", KindConnect, false},
-		{"register ack", 'X', false},
-		{"version reply", 'R', false},
-		{"port info reply", 'G', false},
-		{"port caps reply", 'g', false},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := isSessionFrame(tc.kind)
-			if got != tc.want {
-				t.Errorf("isSessionFrame(%q) = %v, want %v", tc.kind, got, tc.want)
-			}
-		})
-	}
-}
-
-// TestKeepaliveHeader confirms the keepalive frame is a plain version
-// request (isSessionFrame(agw.KindVersion) is false, so the dispatcher
-// never routes the server's reply into a session), carrying our callsign
-// and the configured radio port.
-func TestKeepaliveHeader(t *testing.T) {
-	hdr := keepaliveHeader(3, "N0CALL")
-
-	if hdr.DataKind != agw.KindVersion {
-		t.Errorf("DataKind = %q, want %q", hdr.DataKind, agw.KindVersion)
-	}
-	if hdr.Port != 3 {
-		t.Errorf("Port = %d, want 3", hdr.Port)
-	}
-	if hdr.CallFrom != "N0CALL" {
-		t.Errorf("CallFrom = %q, want %q", hdr.CallFrom, "N0CALL")
-	}
-	if isSessionFrame(hdr.DataKind) {
-		t.Errorf("isSessionFrame(%q) = true, want false", hdr.DataKind)
-	}
-}
 
 func TestIsCommandStreamClosed(t *testing.T) {
 	cases := []struct {
@@ -105,7 +57,7 @@ func (w *recordingWriter) sawDisconnect() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for _, hdr := range w.headers {
-		if hdr.DataKind == KindDisconnect {
+		if hdr.DataKind == agwconn.KindDisconnect {
 			return true
 		}
 	}
@@ -127,7 +79,7 @@ func TestHandleSessionIdleTimeout(t *testing.T) {
 		IdleTimeout: 50 * time.Millisecond,
 	}
 
-	frames := make(chan agwFrame)
+	frames := make(chan agwconn.Frame)
 	done := make(chan string, 1)
 
 	go handleSession(ctx, w.write, cfg, frames, done)
@@ -162,7 +114,7 @@ func TestHandleSessionIdleTimeoutResetByActivity(t *testing.T) {
 		IdleTimeout: idleTimeout,
 	}
 
-	frames := make(chan agwFrame)
+	frames := make(chan agwconn.Frame)
 	done := make(chan string, 1)
 
 	go handleSession(ctx, w.write, cfg, frames, done)
@@ -173,7 +125,7 @@ func TestHandleSessionIdleTimeoutResetByActivity(t *testing.T) {
 	deadline := time.Now().Add(activityWindow)
 	for time.Now().Before(deadline) {
 		select {
-		case frames <- agwFrame{hdr: &agw.Header{DataKind: KindConnectedData, CallFrom: cfg.RemoteCall}, data: []byte("x")}:
+		case frames <- agwconn.Frame{Hdr: &agw.Header{DataKind: agwconn.KindConnectedData, CallFrom: cfg.RemoteCall}, Data: []byte("x")}:
 		case <-done:
 			t.Fatal("session ended early despite ongoing activity")
 		}
@@ -242,7 +194,7 @@ type dataWriter struct {
 }
 
 func (w *dataWriter) write(hdr *agw.Header, data []byte) error {
-	if hdr.DataKind != KindConnectedData {
+	if hdr.DataKind != agwconn.KindConnectedData {
 		return nil
 	}
 	w.mu.Lock()
@@ -279,11 +231,11 @@ func runEchoSession(t *testing.T, crlfToCR bool, input string, wantLen int) stri
 		CRLFToCR:   crlfToCR,
 	}
 
-	frames := make(chan agwFrame)
+	frames := make(chan agwconn.Frame)
 	done := make(chan string, 1)
 	go handleSession(ctx, w.write, cfg, frames, done)
 
-	frames <- agwFrame{hdr: &agw.Header{DataKind: KindConnectedData, CallFrom: cfg.RemoteCall}, data: []byte(input)}
+	frames <- agwconn.Frame{Hdr: &agw.Header{DataKind: agwconn.KindConnectedData, CallFrom: cfg.RemoteCall}, Data: []byte(input)}
 
 	deadline := time.Now().Add(2 * time.Second)
 	for w.len() < wantLen && time.Now().Before(deadline) {
