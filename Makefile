@@ -12,13 +12,19 @@ export GOOS
 
 AGWLISTEN=agwlisten-$(GOOS)-$(GOARCH)
 AGWCONNECT=agwconnect-$(GOOS)-$(GOARCH)
+COMMON=internal/*/*.go
+
+.PHONY: all tidy install clean
 
 all: $(AGWLISTEN) $(AGWCONNECT)
 
-$(AGWLISTEN): $(wildcard cmd/agwlisten/*.go internal/*/*.go)
+tidy:
+	go mod tidy
+
+$(AGWLISTEN): $(wildcard cmd/agwlisten/*.go $(COMMON))
 	$(GO) build -o $@ ./cmd/agwlisten
 
-$(AGWCONNECT): $(wildcard cmd/agwconnect/*.go internal/*/*.go)
+$(AGWCONNECT): $(wildcard cmd/agwconnect/*.go $(COMMON))
 	$(GO) build -o $@ ./cmd/agwconnect
 
 install: $(AGWLISTEN) $(AGWCONNECT)
