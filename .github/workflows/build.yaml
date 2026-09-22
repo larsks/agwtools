@@ -1,0 +1,32 @@
+name: Build
+
+on:
+  push:
+    branches: main
+
+jobs:
+  version:
+    uses: ./.github/workflows/version.yaml
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+  binaries:
+    needs: version
+    uses: ./.github/workflows/binaries.yaml
+    permissions:
+      contents: write
+    with:
+      published: ${{ needs.version.outputs.published }}
+      version: ${{ needs.version.outputs.version }}
+
+  container-image:
+    needs: version
+    uses: ./.github/workflows/container-image.yaml
+    permissions:
+      contents: write
+      packages: write
+    with:
+      published: ${{ needs.version.outputs.published }}
+      version: ${{ needs.version.outputs.version }}

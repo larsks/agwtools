@@ -1,8 +1,14 @@
-name: Build
+name: Container image
 
 on:
-  push:
-    branches: main
+  workflow_call:
+    inputs:
+      published:
+        type: string
+        default: "false"
+      version:
+        type: string
+        default: ""
 
 env:
   # Use docker.io for Docker Hub if empty
@@ -11,35 +17,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  version:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      issues: write
-      pull-requests: write
-
-    outputs:
-      published: ${{ steps.semrel.outputs.new_release_published }}
-      version: ${{ steps.semrel.outputs.new_release_version }}
-      major: ${{ steps.semrel.outputs.new_release_major_version }}
-      minor: ${{ steps.semrel.outputs.new_release_minor_version }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 20
-
-      - name: Release
-        id: semrel
-        uses: cycjimmy/semantic-release-action@v6
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   build:
-    needs: version
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -74,9 +52,9 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           # Version tags are only generated when this run created a release.
           tags: |
-            type=semver,pattern=v{{version}},value=${{ needs.version.outputs.version }},enable=${{  needs.version.outputs.published == 'true' }}
-            type=semver,pattern=v{{major}}.{{minor}},value=${{ needs.version.outputs.version }},enable=${{ needs.version.outputs.published == 'true' }}
-            type=semver,pattern=v{{major}},value=${{ needs.version.outputs.version }},enable=${{ needs.version.outputs.published == 'true' }}
+            type=semver,pattern=v{{version}},value=${{ inputs.version }},enable=${{  inputs.published == 'true' }}
+            type=semver,pattern=v{{major}}.{{minor}},value=${{ inputs.version }},enable=${{ inputs.published == 'true' }}
+            type=semver,pattern=v{{major}},value=${{ inputs.version }},enable=${{ inputs.published == 'true' }}
             type=ref,event=branch
             type=ref,event=pr
             type=sha
@@ -96,5 +74,5 @@ jobs:
           # Passed through to the Makefile (see the Containerfile). Without a
           # new release we fall back to the Makefile's default version.
           build-args: |
-            VERSION=${{ needs.version.outputs.version || 'devel' }}
+            VERSION=${{ inputs.version || 'devel' }}
             COMMIT=${{ github.sha }}
