@@ -43,9 +43,9 @@
 # station. "0s" disables it.                          (default "10m")
 #idle-timeout = "10m"
 
-# Translate \r\n to \r in command output sent to the remote station.
+# Don't translate \r\n to \r in command output sent to the remote station.
 #                                                     (default false)
-#eol = true
+#raw = false
 
 # Any [shared] option can be overridden for this command alone, e.g. to
 # listen on a different gateway than agwconnect uses:

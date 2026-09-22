@@ -38,7 +38,7 @@ type Options struct {
 	once        bool
 	maxCons     int
 	idleTimeout time.Duration
-	eol         bool
+	raw         bool
 }
 
 var options Options
@@ -51,11 +51,11 @@ func init() {
 	flag.BoolVarP(&options.once, "once", "o", false, "exit after first command completes")
 	flag.IntVarP(&options.maxCons, "max-connections", "m", 0, "maximum simultaneous connections (0 = unlimited)")
 	flag.DurationVarP(&options.idleTimeout, "idle-timeout", "i", 10*time.Minute, "disconnect a session after this period of inactivity from the remote station (0 to disable)")
-	flag.BoolVarP(&options.eol, "eol", "l", false, "translate \\r\\n to \\r in command output sent to the remote station")
+	flag.BoolVarP(&options.raw, "raw", "r", false, "do not translate \\r\\n to \\r in command output sent to the remote station")
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: agwlisten [-f <config>] [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [-i <timeout>] [--eol|-l] [--once|-o] [--version] -- <command> [<args>...]\n")
+	fmt.Fprintf(os.Stderr, "Usage: agwlisten [-f <config>] [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [-i <timeout>] [--raw|-r] [--once|-o] [--version] -- <command> [<args>...]\n")
 	flag.PrintDefaults()
 }
 
@@ -199,7 +199,7 @@ connectionLoop:
 						CmdArgs:     cmdArgs,
 						UsePty:      options.usePty,
 						IdleTimeout: options.idleTimeout,
-						CRLFToCR:    options.eol,
+						CRLFToCR:    !options.raw,
 					}
 					go handleSession(connCtx, writeAGW, cfg, ch, sessionDone)
 				} else if agwconn.IsSessionFrame(f.Hdr.DataKind) {

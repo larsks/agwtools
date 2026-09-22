@@ -262,7 +262,7 @@ func TestHandleSessionCRLFToCR(t *testing.T) {
 	}
 }
 
-// TestHandleSessionCRLFPassthrough confirms the default leaves output alone.
+// TestHandleSessionCRLFPassthrough confirms --raw leaves output alone.
 func TestHandleSessionCRLFPassthrough(t *testing.T) {
 	got := runEchoSession(t, false, "one\r\ntwo\r\n", len("one\r\ntwo\r\n"))
 	if want := "one\r\ntwo\r\n"; got != want {

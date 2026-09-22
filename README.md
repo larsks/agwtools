@@ -17,10 +17,9 @@ agwlisten -c SHELL -t -- dash
 Available options:
 
 ```
-Usage: agwlisten [-f <config>] [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [-i <timeout>] [--eol|-l] [--once|-o] [--version] -- <command> [<args>...]
+Usage: agwlisten [-f <config>] [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [-i <timeout>] [--raw|-r] [--once|-o] [--version] -- <command> [<args>...]
   -c, --callsign string         local callsign to register (default "NOCALL")
   -f, --config string           configuration file (default: $AGWTOOLS_CONFIG_PATH, else $XDG_CONFIG_HOME/agwtools/config.toml, else ~/.config/agwtools/config.toml; "" to read none)
-  -l, --eol                     translate \r\n to \r in command output sent to the remote station
   -h, --host string             agwpe_host:port (default "localhost:8000")
   -i, --idle-timeout duration   disconnect a session after this period of inactivity from the remote station (0 to disable) (default 10m0s)
   -k, --keepalive duration      interval for AGWPE keepalive frames, to prevent the server from closing an idle connection (0 to disable) (default 1m0s)
@@ -28,6 +27,7 @@ Usage: agwlisten [-f <config>] [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>]
   -o, --once                    exit after first command completes
   -p, --port int                radio port
   -t, --pty                     allocate a pty for the command
+  -r, --raw                     do not translate \r\n to \r in command output sent to the remote station
       --version                 print the build date and git commit, then exit
 ```
 
