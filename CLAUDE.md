@@ -17,10 +17,6 @@ Implemented:
 - `cmd/agwlisten` -- Make a program availble via AGWPE (like inetd for AGWPE)
 - `cmd/agwconnect` -- Connect to remote systems (like telnet for AGWPE)
 
-To be implemented:
-
-- `cmd/agwchat` -- AGWPE-based chat program
-
 ## Shared packages
 
 - `internal/agwconn` -- Options common to all commands (`--host`, `--port`,
