@@ -54,7 +54,13 @@ func init() {
 	flag.BoolVarP(&options.eol, "eol", "l", false, "translate \\r\\n to \\r in command output sent to the remote station")
 }
 
+func usage() {
+	fmt.Fprintf(os.Stderr, "Usage: agwlisten [-f <config>] [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [-i <timeout>] [--eol|-l] [--once|-o] [--version] -- <command> [<args>...]\n")
+	flag.PrintDefaults()
+}
+
 func main() {
+	flag.Usage = usage
 	flag.Parse()
 
 	if options.ShowVersion {
@@ -72,7 +78,8 @@ func main() {
 
 	args := flag.Args()
 	if len(args) == 0 {
-		log.Fatalf("Usage: agwlisten [-f <config>] [-h <agwpe_host:port>] [--pty|-t] [-c <callsign>] [-p <port>] [-m <limit>] [-k <interval>] [-i <timeout>] [--eol|-l] [--once|-o] [--version] -- <command> [<args>...]")
+		usage()
+		os.Exit(2)
 	}
 	if err := options.Validate(); err != nil {
 		log.Fatal(err)
